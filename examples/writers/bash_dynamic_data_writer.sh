@@ -5,6 +5,9 @@ TARGET="${TARGET:-/run/blecastd/dynamic_data.bin}"
 DYNAMIC_DATA_LEN="${DYNAMIC_DATA_LEN:-22}"
 INTERVAL_SEC="${INTERVAL_SEC:-2}"
 
+# This writer produces only dynamic data. Do not include the static header here;
+# blecastd prepends the configured static header to the user field.
+
 write_dynamic_data_atomic_from_hex() {
     local hex="$1"
     local dir

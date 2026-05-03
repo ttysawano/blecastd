@@ -7,7 +7,8 @@ Wants=bluetooth.target
 Type=simple
 User=root
 Group=root
-ExecStart=/usr/bin/python3 /opt/blecastd/src/blecastd/main.py --config /etc/blecastd/blecastd.toml
+Environment=PYTHONPATH=/opt/blecastd/src
+ExecStart=/usr/bin/python3 -m blecastd.main --config /etc/blecastd/blecastd.toml
 Restart=on-failure
 RestartSec=5
 

@@ -14,6 +14,10 @@ DEFAULT_INTERVAL_SEC = 2.0
 DEFAULT_DYNAMIC_DATA_LEN = 22
 
 
+# This writer produces only dynamic data. Do not include the static header here;
+# blecastd prepends the configured static header to the user field.
+
+
 def collect_sensor_values() -> dict[str, float | int]:
     return {
         "timestamp": int(time.time()),

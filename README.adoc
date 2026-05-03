@@ -2,40 +2,314 @@
 
 `blecastd` is a Linux daemon for broadcasting small binary data through BLE Advertising.
 
-This repository is currently at Milestone 2. It includes the source layout, default commented TOML configuration, configuration validation, Advertising Data builders, dynamic data file helpers, and raw HCI advertising control for manual Linux testing.
+It is intended for small Linux hosts such as Raspberry Pi systems using a USB Bluetooth adapter or other HCI Bluetooth device.
+The daemon reads dynamic data from a runtime file, combines it with the configured static header, and broadcasts the result as BLE Advertising Data.
 
-The installer and systemd installation remain stubs.
+Milestone 2 raw HCI advertising has been validated on Linux hardware.
+Milestone 3 adds installation, systemd service management, runtime directory setup, example writers, and operational documentation.
 
-== Manual Daemon Run
+== Default Advertising Data Format
 
-Run from the repository on Linux with Python 3.11 or newer:
+The default `custom_manufacturer` format is legacy BLE Advertising Data with Flags and Manufacturer Specific Data.
+
+With the default configuration, the Advertising Data begins with:
+
+[source,text]
+----
+0201061bff34124243
+----
+
+Breakdown:
+
+[source,text]
+----
+02 01 06
+Flags AD structure
+
+1b ff
+Manufacturer Specific Data AD structure
+
+34 12
+Company Identifier 0x1234, little-endian
+
+42 43
+static header = ASCII "BC"
+
+[22 bytes]
+dynamic data read from /run/blecastd/dynamic_data.bin
+----
+
+The example writer scripts write only dynamic data.
+Do not include the static header in writer output; `blecastd` adds the static header to the user field.
+
+== Company Identifier Warning
+
+The default custom Manufacturer Specific Data configuration uses:
+
+[source,toml]
+----
+company_id = "0x1234"
+----
+
+This temporary Company Identifier is only for closed laboratory experiments.
+Public products or externally distributed beacon specifications must use an official Bluetooth SIG Company Identifier.
+
+Do not use Apple's `0x004C` Company Identifier for custom Manufacturer Specific Data mode.
+It is used only for iBeacon compatibility mode.
+
+== Installation
+
+Install on the target Linux machine:
 
 [source,bash]
 ----
-sudo PYTHONPATH=src python3.11 -m blecastd.main --config etc/blecastd.toml
+sudo ./install.sh
 ----
 
-To observe controller commands in another terminal:
+The installer:
+
+* creates the `blecast` system group if needed
+* installs source files under `/opt/blecastd/`
+* installs `/etc/blecastd/blecastd.toml` only if it does not already exist
+* installs or updates `/etc/blecastd/blecastd.toml.example`
+* installs `/etc/systemd/system/blecastd.service`
+* installs `/etc/tmpfiles.d/blecastd.conf`
+* creates `/run/blecastd`
+* enables and starts `blecastd.service`
+
+The installer does not stop or disable `bluetooth.service`.
+If BlueZ or another process controls the same HCI device, see troubleshooting below.
+
+== Service Operations
 
 [source,bash]
 ----
-sudo btmon
+sudo systemctl status blecastd
+sudo systemctl restart blecastd
+sudo journalctl -u blecastd -f
 ----
+
+The service runs as root initially because raw HCI access usually requires elevated privileges.
+Future versions may reduce privileges using Linux capabilities.
+
+== Configuration
+
+Main configuration file:
+
+[source,text]
+----
+/etc/blecastd/blecastd.toml
+----
+
+If the file already exists during installation, it is not overwritten.
+An updated sample is installed as:
+
+[source,text]
+----
+/etc/blecastd/blecastd.toml.example
+----
+
+Important fields:
+
+* `bluetooth.device`: HCI device such as `hci0` or `hci1`
+* `service.update_interval_ms`: how often the daemon reads dynamic data and updates Advertising Data
+* `service.advertising_interval_ms`: BLE controller advertising interval
+* `custom_manufacturer.company_id`: Manufacturer Specific Data Company Identifier
+* `user_field.static_header_hex`: static header prepended by the daemon
+* `dynamic_data.file`: runtime dynamic data file
+* `dynamic_data.length`: number of dynamic data bytes to read
+
+== Runtime Dynamic Data
+
+Default dynamic data file:
+
+[source,text]
+----
+/run/blecastd/dynamic_data.bin
+----
+
+The runtime directory is created by systemd-tmpfiles using:
+
+[source,text]
+----
+d /run/blecastd 2775 root blecast -
+----
+
+External writer processes should write dynamic data using atomic replacement:
+
+. Create a temporary file in `/run/blecastd`.
+. Write exactly the dynamic data bytes, without the static header.
+. Set mode such as `0664`.
+. Replace the target with `mv` or `os.replace()`.
+
+To allow a non-root writer user to update the runtime file:
+
+[source,bash]
+----
+sudo usermod -aG blecast <user>
+----
+
+The user must log out and back in, or run:
+
+[source,bash]
+----
+newgrp blecast
+----
+
+== Example Writers
+
+Bash writer:
+
+[source,bash]
+----
+examples/writers/bash_dynamic_data_writer.sh
+----
+
+The Bash writer builds dynamic data as hex, converts it with `xxd -r -p`, and atomically replaces the target with `mv`.
+
+Python writer:
+
+[source,bash]
+----
+examples/writers/python_dynamic_data_writer.py
+----
+
+The Python writer encodes sample sensor values and atomically replaces the target with `os.replace()`.
+
+Both examples default to:
+
+[source,text]
+----
+/run/blecastd/dynamic_data.bin
+----
+
+== Validation With btmon
+
+In one terminal:
+
+[source,bash]
+----
+sudo btmon -i hci0
+----
+
+In another terminal:
+
+[source,bash]
+----
+sudo systemctl restart blecastd
+----
+
+Expected HCI command sequence includes:
+
+* `LE Set Advertising Parameters`
+* `LE Set Advertising Data`
+* `LE Set Advertise Enable`
+
+Expected default Advertising Data prefix:
+
+[source,text]
+----
+0201061bff34124243
+----
+
+== Manual Foreground Debugging
+
+Run from the repository checkout:
+
+[source,bash]
+----
+sudo PYTHONPATH=src python3 -m blecastd.main --config etc/blecastd.toml
+----
+
+Run installed source directly:
+
+[source,bash]
+----
+sudo PYTHONPATH=/opt/blecastd/src /usr/bin/python3 -m blecastd.main --config /etc/blecastd/blecastd.toml
+----
+
+Use Ctrl+C to stop the foreground daemon.
+The daemon disables advertising and closes the raw HCI device during shutdown.
 
 == Self Checks
 
+Automated checks do not require Bluetooth hardware:
+
 [source,bash]
 ----
-PYTHONPATH=src python3.11 -m unittest discover -s tests
-PYTHONPATH=src python3.11 -m blecastd.main --self-check --config etc/blecastd.toml
+PYTHONPATH=src python3 -m pytest
+PYTHONPATH=src python3 -m blecastd.main --self-check --config etc/blecastd.toml
 ----
 
-Use any Python 3.11 or newer interpreter for these commands.
+== Scanner Examples
 
-== Company Identifier Notice
+Scanner examples are under:
 
-The default custom Manufacturer Specific Data configuration uses temporary Company Identifier `0x1234` only for closed laboratory experiments.
+[source,text]
+----
+examples/scanners/
+----
 
-For public products, externally distributed beacon specifications, or production deployment, use an official Bluetooth SIG Company Identifier.
+`linux_hci_scan.py` runs `btmon -i hci0` by default and is intended for raw HCI inspection.
+`bleak_scan_custom.py` is a convenience example for environments where Bleak is installed.
+Bleak may hide or transform low-level advertising details on some platforms.
 
-Do not use Apple's `0x004C` Company Identifier for custom Manufacturer Specific Data mode. It is used only for iBeacon compatibility mode.
+== Troubleshooting
+
+`bluetoothd` may interfere::
+`blecastd` directly controls the configured HCI device. If advertising commands are overwritten or fail, test with a dedicated USB Bluetooth dongle or temporarily stop conflicting Bluetooth management on a lab system.
+
+`hci0` versus `hci1`::
+Check available devices with `hciconfig` and update `bluetooth.device` in `/etc/blecastd/blecastd.toml`.
+
+rfkill::
+If the controller is blocked, unblock it before starting the service:
++
+[source,bash]
+----
+rfkill list bluetooth
+sudo rfkill unblock bluetooth
+----
+
+Runtime file permissions::
+Check `/run/blecastd` permissions and group ownership:
++
+[source,bash]
+----
+ls -ld /run/blecastd
+ls -l /run/blecastd/dynamic_data.bin
+id <user>
+----
++
+Writer users need membership in the `blecast` group and a fresh login session or `newgrp blecast`.
+
+Root-owned `__pycache__` avoidance::
+Running Python with `sudo` from the repository can create root-owned `__pycache__` files. They are ignored by git, and `install.sh` removes Python cache files from `/opt/blecastd` after copying source files. For foreground debugging, setting `PYTHONDONTWRITEBYTECODE=1` avoids cache creation:
++
+[source,bash]
+----
+sudo PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m blecastd.main --config etc/blecastd.toml
+----
+
+Service logs::
+Use:
++
+[source,bash]
+----
+sudo journalctl -u blecastd -f
+sudo journalctl -u blecastd -n 100
+----
+
+== Uninstall
+
+Conservative uninstall:
+
+[source,bash]
+----
+sudo ./uninstall.sh
+----
+
+The uninstaller stops and disables `blecastd.service`, removes installed service and tmpfiles configuration, removes `/opt/blecastd/`, and runs `systemctl daemon-reload`.
+
+It does not remove `/etc/blecastd/` by default.
+It does not remove the `blecast` group by default.
