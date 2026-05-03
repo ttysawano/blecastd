@@ -157,7 +157,7 @@ class BlecastdDaemon:
     def _configure_hci(self, config: BlecastdConfig) -> None:
         if self.controller is None:
             raise HCIError("HCI controller is not open")
-        self._set_advertising_enabled(False)
+        self._set_advertising_enabled(False, allow_command_disallowed=True)
         self.controller.set_advertising_parameters(config.service.advertising_interval_ms)
         LOG.info(
             "configured advertising interval %d ms on %s",
@@ -203,10 +203,13 @@ class BlecastdDaemon:
 
         raise ConfigError(f"beacon.format is unknown: {config.beacon.format}")
 
-    def _set_advertising_enabled(self, enabled: bool) -> None:
+    def _set_advertising_enabled(self, enabled: bool, *, allow_command_disallowed: bool = False) -> None:
         if self.controller is None:
             raise HCIError("HCI controller is not open")
-        self.controller.set_advertising_enabled(enabled)
+        self.controller.set_advertising_enabled(
+            enabled,
+            allow_command_disallowed=allow_command_disallowed,
+        )
         self.advertising_enabled = enabled
         LOG.info("advertising %s", "enabled" if enabled else "disabled")
 
@@ -282,7 +285,7 @@ def main() -> int:
             return run_self_check(args.config)
         return BlecastdDaemon(args.config).run()
     except (ConfigError, HCIError, OSError) as exc:
-        LOG.error("%s", exc)
+        LOG.exception("%s", exc)
         return 1
 
 

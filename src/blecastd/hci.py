@@ -7,17 +7,22 @@ import errno
 import fcntl
 import logging
 import platform
+import re
 import socket
 import struct
+import subprocess
 import time
 
 
 LOG = logging.getLogger(__name__)
 
+HCI_DEVICE_RE = re.compile(r"^hci([0-9]+)$")
+
 HCI_COMMAND_PKT = 0x01
 HCI_EVENT_PKT = 0x04
 EVT_CMD_COMPLETE = 0x0E
 EVT_CMD_STATUS = 0x0F
+HCI_STATUS_COMMAND_DISALLOWED = 0x0C
 
 OGF_LE_CTL = 0x08
 OCF_LE_SET_ADVERTISING_PARAMETERS = 0x0006
@@ -50,13 +55,15 @@ class HCICommandResult:
     status: int
 
 
-def device_name_to_id(device: str) -> int:
-    if not device.startswith("hci"):
+def parse_hci_device_name(device: str) -> int:
+    match = HCI_DEVICE_RE.fullmatch(device)
+    if match is None:
         raise HCIError(f"invalid HCI device name: {device}")
-    try:
-        return int(device[3:])
-    except ValueError as exc:
-        raise HCIError(f"invalid HCI device name: {device}") from exc
+    return int(match.group(1))
+
+
+def device_name_to_id(device: str) -> int:
+    return parse_hci_device_name(device)
 
 
 def advertising_interval_ms_to_units(advertising_interval_ms: int) -> int:
@@ -104,6 +111,18 @@ def build_le_set_advertise_enable(enable: bool) -> bytes:
     return build_hci_command_packet(OPCODE_LE_SET_ADVERTISE_ENABLE, bytes([1 if enable else 0]))
 
 
+def build_command_response_filter(opcode: int) -> bytes:
+    type_mask = 1 << HCI_EVENT_PKT
+    event_mask0 = 0
+    event_mask1 = 0
+    for event_code in (EVT_CMD_COMPLETE, EVT_CMD_STATUS):
+        if event_code < 32:
+            event_mask0 |= 1 << event_code
+        else:
+            event_mask1 |= 1 << (event_code - 32)
+    return struct.pack("<IIIHxx", type_mask, event_mask0, event_mask1, opcode)
+
+
 class HCIController:
     """Small wrapper around a raw Linux HCI socket."""
 
@@ -122,23 +141,12 @@ class HCIController:
         if af_bluetooth is None or btproto_hci is None:
             raise HCIError("this Python build does not expose Bluetooth HCI sockets")
 
-        control_sock = socket.socket(af_bluetooth, socket.SOCK_RAW, btproto_hci)
-        try:
-            try:
-                fcntl.ioctl(control_sock.fileno(), HCIDEVUP, struct.pack("I", self.dev_id))
-            except OSError as exc:
-                if exc.errno not in (errno.EALREADY, errno.EBUSY):
-                    raise HCIError(f"failed to bring up {self.device}: {exc}") from exc
-        finally:
-            control_sock.close()
-
         raw_sock = socket.socket(af_bluetooth, socket.SOCK_RAW, btproto_hci)
         raw_sock.settimeout(self.timeout_sec)
-        try:
-            raw_sock.bind((self.dev_id, HCI_CHANNEL_RAW))
-        except TypeError:
-            raw_sock.bind((self.dev_id,))
+        LOG.debug("binding raw HCI socket for %s with dev_id=%d", self.device, self.dev_id)
+        raw_sock.bind((self.dev_id,))
         self.sock = raw_sock
+        self._bring_up_if_needed(af_bluetooth, btproto_hci)
         LOG.info("opened raw HCI device %s", self.device)
 
     def close(self) -> None:
@@ -154,6 +162,34 @@ class HCIController:
     def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
         self.close()
 
+    def _bring_up_if_needed(self, af_bluetooth: int, btproto_hci: int) -> None:
+        control_sock = socket.socket(af_bluetooth, socket.SOCK_RAW, btproto_hci)
+        try:
+            try:
+                fcntl.ioctl(control_sock.fileno(), HCIDEVUP, struct.pack("I", self.dev_id))
+                return
+            except OSError as exc:
+                if exc.errno in (errno.EALREADY, errno.EBUSY):
+                    return
+                LOG.warning("failed to bring up %s with HCI ioctl: %s", self.device, exc)
+        finally:
+            control_sock.close()
+
+        try:
+            subprocess.run(
+                ["hciconfig", self.device, "up"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            LOG.warning("hciconfig is unavailable; continuing with bound raw HCI device %s", self.device)
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            LOG.warning("failed to bring up %s with hciconfig: %s", self.device, detail)
+        except OSError as exc:
+            LOG.warning("failed to run hciconfig for %s: %s", self.device, exc)
+
     def set_advertising_parameters(self, advertising_interval_ms: int) -> None:
         self._send_command_and_check(
             OPCODE_LE_SET_ADVERTISING_PARAMETERS,
@@ -166,10 +202,15 @@ class HCIController:
             build_le_set_advertising_data(advertising_data),
         )
 
-    def set_advertising_enabled(self, enabled: bool) -> None:
-        self._send_command_and_check(
-            OPCODE_LE_SET_ADVERTISE_ENABLE,
-            build_le_set_advertise_enable(enabled),
+    def set_advertising_enabled(self, enabled: bool, *, allow_command_disallowed: bool = False) -> None:
+        result = self._send_command(OPCODE_LE_SET_ADVERTISE_ENABLE, build_le_set_advertise_enable(enabled))
+        if result.status == 0:
+            return
+        if not enabled and allow_command_disallowed and result.status == HCI_STATUS_COMMAND_DISALLOWED:
+            LOG.info("advertising was already disabled on %s", self.device)
+            return
+        raise HCIError(
+            f"HCI command 0x{OPCODE_LE_SET_ADVERTISE_ENABLE:04x} failed with status 0x{result.status:02x}"
         )
 
     def _send_command_and_check(self, opcode: int, packet: bytes) -> None:
@@ -182,14 +223,22 @@ class HCIController:
             raise HCIError("HCI device is not open")
 
         self._set_command_event_filter(opcode)
+        LOG.debug("sending HCI command 0x%04x to %s", opcode, self.device)
         self.sock.sendall(packet)
         deadline = time.monotonic() + self.timeout_sec
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise HCIError(f"timed out waiting for HCI command 0x{opcode:04x}")
+                raise HCIError(
+                    f"timed out waiting for Command Complete or Command Status for HCI command 0x{opcode:04x}"
+                )
             self.sock.settimeout(remaining)
-            event = self.sock.recv(260)
+            try:
+                event = self.sock.recv(260)
+            except TimeoutError as exc:
+                raise HCIError(
+                    f"timed out waiting for Command Complete or Command Status for HCI command 0x{opcode:04x}"
+                ) from exc
             result = parse_command_result(event, opcode)
             if result is not None:
                 return result
@@ -198,11 +247,20 @@ class HCIController:
         if self.sock is None:
             raise HCIError("HCI device is not open")
 
-        type_mask = 1 << HCI_EVENT_PKT
-        event_mask0 = (1 << EVT_CMD_COMPLETE) | (1 << EVT_CMD_STATUS)
-        event_mask1 = 0
-        hci_filter = struct.pack("<LLLH", type_mask, event_mask0, event_mask1, opcode)
-        self.sock.setsockopt(getattr(socket, "SOL_HCI", SOL_HCI), HCI_FILTER, hci_filter)
+        hci_filter = build_command_response_filter(opcode)
+        level = getattr(socket, "SOL_HCI", SOL_HCI)
+        LOG.debug(
+            "setting raw HCI command response filter for opcode 0x%04x on %s level=%d optname=%d length=%d",
+            opcode,
+            self.device,
+            level,
+            HCI_FILTER,
+            len(hci_filter),
+        )
+        try:
+            self.sock.setsockopt(level, HCI_FILTER, hci_filter)
+        except OSError as exc:
+            raise HCIError(f"failed to set raw HCI command response filter for opcode 0x{opcode:04x}: {exc}") from exc
 
 
 def parse_command_result(event: bytes, expected_opcode: int) -> HCICommandResult | None:
