@@ -1,0 +1,41 @@
+= blecastd
+
+`blecastd` is a Linux daemon for broadcasting small binary data through BLE Advertising.
+
+This repository is currently at Milestone 2. It includes the source layout, default commented TOML configuration, configuration validation, Advertising Data builders, dynamic data file helpers, and raw HCI advertising control for manual Linux testing.
+
+The installer and systemd installation remain stubs.
+
+== Manual Daemon Run
+
+Run from the repository on Linux with Python 3.11 or newer:
+
+[source,bash]
+----
+sudo PYTHONPATH=src python3.11 -m blecastd.main --config etc/blecastd.toml
+----
+
+To observe controller commands in another terminal:
+
+[source,bash]
+----
+sudo btmon
+----
+
+== Self Checks
+
+[source,bash]
+----
+PYTHONPATH=src python3.11 -m unittest discover -s tests
+PYTHONPATH=src python3.11 -m blecastd.main --self-check --config etc/blecastd.toml
+----
+
+Use any Python 3.11 or newer interpreter for these commands.
+
+== Company Identifier Notice
+
+The default custom Manufacturer Specific Data configuration uses temporary Company Identifier `0x1234` only for closed laboratory experiments.
+
+For public products, externally distributed beacon specifications, or production deployment, use an official Bluetooth SIG Company Identifier.
+
+Do not use Apple's `0x004C` Company Identifier for custom Manufacturer Specific Data mode. It is used only for iBeacon compatibility mode.

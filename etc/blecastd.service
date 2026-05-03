@@ -1,0 +1,15 @@
+[Unit]
+Description=blecastd BLE Advertising Beacon Daemon
+After=network.target bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /opt/blecastd/src/blecastd/main.py --config /etc/blecastd/blecastd.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -192,8 +192,17 @@ With default values:
 ## [source,text]
 
 02 01 06
-19 FF 34 12 42 43 [22 bytes dynamic data]
+1B FF 34 12 42 43 [22 bytes dynamic data]
 -----------------------------------------
+
+The total Advertising Data length is 31 bytes:
+
+## [source,text]
+
+3 bytes Flags AD structure
+28 bytes Manufacturer Specific Data AD structure
+31 bytes total Advertising Data
+-----------------------------------------------
 
 Breakdown:
 
@@ -205,9 +214,9 @@ Length = 2
 Type   = 0x01
 Value  = 0x06
 
-19 FF
+1B FF
 Manufacturer Specific Data AD structure
-Length = 0x19 = 25 bytes after Length
+Length = 0x1B = 27 bytes after the Length byte
 Type   = 0xFF
 
 34 12
@@ -217,7 +226,7 @@ Company Identifier = 0x1234, little-endian
 static header = ASCII "BC"
 
 [22 bytes]
-dynamic data
+dynamic data = 22 bytes
 ------------
 
 The default user field length is:

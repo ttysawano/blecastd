@@ -1,0 +1,94 @@
+# /etc/blecastd/blecastd.toml
+#
+# Default configuration for blecastd.
+# This file is written in TOML format.
+
+[bluetooth]
+# Bluetooth HCI device name used for advertising.
+# Examples: "hci0", "hci1"
+device = "hci0"
+
+[service]
+# Main update interval in milliseconds.
+# The daemon reads the dynamic data file at this interval and updates
+# the BLE Advertising Data.
+update_interval_ms = 2000
+
+# BLE controller-level advertising interval in milliseconds.
+# This controls how frequently the Bluetooth controller emits advertising events.
+advertising_interval_ms = 100
+
+# Operation mode.
+# "periodic" : update and advertise continuously
+# "signal"   : advertise only when SIGUSR1 is received
+# "both"     : periodic advertising plus SIGUSR1-triggered immediate update
+trigger_mode = "periodic"
+
+# Duration of the advertising window for one-shot signal-triggered mode.
+# Note: BLE cannot guarantee exactly one physical packet. This opens a short
+# advertising window, during which multiple advertising events may be emitted.
+oneshot_duration_ms = 300
+
+[beacon]
+# Beacon format.
+# "custom_manufacturer" is intended for sensor data transport.
+# "ibeacon" is intended mainly for compatibility checks with existing scanners.
+format = "custom_manufacturer"
+
+[custom_manufacturer]
+# Temporary Company Identifier used for closed laboratory experiments.
+# For public products or externally distributed beacon specifications,
+# use an official Bluetooth SIG Company Identifier.
+company_id = "0x1234"
+
+[user_field]
+# Fixed byte sequence prepended by blecastd at the beginning of the user field.
+# Bytes are written in on-air order. This is not interpreted as an integer.
+# 4243 = ASCII "BC"
+static_header_hex = "4243"
+
+# Length of the static header in bytes.
+static_header_length = 2
+
+[dynamic_data]
+# Runtime binary file written by external writer processes.
+# This file contains only the variable dynamic data part of the user field.
+# The static header is added by blecastd.
+file = "/run/blecastd/dynamic_data.bin"
+
+# Number of dynamic data bytes read from the file.
+# In the default custom manufacturer format:
+# 24 bytes total user field
+# 2 bytes static header "BC"
+# 22 bytes dynamic data
+length = 22
+
+# Byte used to initialize a missing dynamic data file and to pad short reads.
+# This must represent exactly one byte.
+# Recommended notation is two hex digits without a 0x prefix.
+# Examples: "00", "ff"
+# If this item is omitted, blecastd treats it as "00".
+fill_byte_hex = "00"
+
+# File mode used when creating the dynamic data file.
+mode = "0664"
+
+# File owner and group used when creating the dynamic data file.
+owner = "root"
+group = "blecast"
+
+# Recommended write method for external writer processes.
+# Writers should write to a temporary file in the same directory and then
+# atomically replace this file using rename(2), mv, or os.replace().
+write_method = "atomic_replace"
+
+[ibeacon]
+# Static iBeacon UUID used when beacon.format = "ibeacon".
+uuid = "12345678-1234-1234-1234-1234567890ab"
+
+# Static iBeacon major/minor values.
+major = 1
+minor = 1
+
+# Calibrated RSSI at 1 m, in dBm.
+tx_power = -59
