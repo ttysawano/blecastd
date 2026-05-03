@@ -7,9 +7,6 @@
 It is intended for small Linux hosts such as Raspberry Pi systems using a USB Bluetooth adapter or other HCI Bluetooth device.
 The daemon reads dynamic data from a runtime file, combines it with the configured static header, and broadcasts the result as BLE Advertising Data.
 
-Milestone 2 raw HCI advertising has been validated on Linux hardware.
-Milestone 3 adds installation, systemd service management, runtime directory setup, example writers, and operational documentation.
-
 == Quick Start
 
 . Clone this repository.
