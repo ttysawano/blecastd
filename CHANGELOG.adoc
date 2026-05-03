@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: MIT
+
+= Changelog
+
+== Unreleased
+
+== v0.1.0 - 2026-05-03
+
+* Added custom Manufacturer Specific Data BLE advertising daemon.
+* Added systemd installation.
+* Added dynamic data atomic replacement model.
+* Added example writer/scanner scripts.
+* Completed Linux HCI hardware validation.

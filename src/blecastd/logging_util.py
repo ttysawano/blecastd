@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Logging setup for blecastd."""
 
 from __future__ import annotations

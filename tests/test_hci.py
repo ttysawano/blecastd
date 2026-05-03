@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 import errno
 import subprocess
 import struct

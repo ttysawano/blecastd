@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Signal handling state for blecastd."""
 
 from __future__ import annotations

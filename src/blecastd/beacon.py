@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Advertising Data builders for blecastd."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Raw Linux HCI advertising control."""
 
 from __future__ import annotations

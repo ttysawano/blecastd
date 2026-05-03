@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Daemon entry point for blecastd."""
 
 from __future__ import annotations

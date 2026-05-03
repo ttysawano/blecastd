@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 = blecastd
 
 `blecastd` is a Linux daemon for broadcasting small binary data through BLE Advertising.
@@ -7,6 +9,24 @@ The daemon reads dynamic data from a runtime file, combines it with the configur
 
 Milestone 2 raw HCI advertising has been validated on Linux hardware.
 Milestone 3 adds installation, systemd service management, runtime directory setup, example writers, and operational documentation.
+
+== Quick Start
+
+. Clone this repository.
+. Review `etc/blecastd.toml`, especially `bluetooth.device`.
+. Install and start the service:
++
+[source,bash]
+----
+sudo ./install.sh
+----
+. Watch service logs:
++
+[source,bash]
+----
+journalctl -u blecastd -f
+----
+. Update `/run/blecastd/dynamic_data.bin` using atomic replacement.
 
 == Default Advertising Data Format
 
@@ -313,3 +333,7 @@ The uninstaller stops and disables `blecastd.service`, removes installed service
 
 It does not remove `/etc/blecastd/` by default.
 It does not remove the `blecast` group by default.
+
+== License
+
+This project is licensed under the MIT License. See LICENSE.

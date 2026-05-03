@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 set -euo pipefail
 
 TARGET="${TARGET:-/run/blecastd/dynamic_data.bin}"

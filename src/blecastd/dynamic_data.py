@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Dynamic data file helpers."""
 
 from __future__ import annotations

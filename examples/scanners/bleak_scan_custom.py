@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Convenience BLE scanner example using Bleak.
 
 Bleak may hide or transform low-level advertising details on some platforms.

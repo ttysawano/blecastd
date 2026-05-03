@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Linux raw Advertising Data inspection helper.
 
 This example delegates capture to btmon, which is the most reliable reference

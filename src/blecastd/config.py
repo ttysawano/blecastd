@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """TOML configuration loading and validation for blecastd."""
 
 from __future__ import annotations
