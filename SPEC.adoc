@@ -1,0 +1,1086 @@
+= blecastd: BLE Advertising Beacon Daemon Specification for Codex
+:toc:
+:toclevels: 3
+:sectnums:
+:source-highlighter: rouge
+
+== Purpose
+
+`blecastd` is a Linux daemon for broadcasting small binary data through BLE Advertising.
+
+The repository goal is to provide a complete source tree that can be installed on a local Linux machine by running an installer such as:
+
+## [source,bash]
+
+## sudo ./install.sh
+
+After installation, `blecastd` should run as a `systemd` service and continuously broadcast data read from a runtime binary data file.
+
+The primary use case is to broadcast sensor information from a Raspberry Pi or similar Debian-based Linux host using a USB Bluetooth dongle or another HCI Bluetooth device.
+
+The default beacon format is a custom BLE Manufacturer Specific Data format.
+The iBeacon format is supported only as a secondary compatibility-check mode.
+It is not intended as the main format for sensor data transport.
+
+== Project Names and Installation Paths
+
+Use the following names consistently throughout the repository.
+
+[cols="1,2",options="header"]
+|===
+| Item | Value
+
+| Project / daemon name
+| `blecastd`
+
+| systemd service name
+| `blecastd.service`
+
+| Linux group for external writers
+| `blecast`
+
+| Installation directory
+| `/opt/blecastd/`
+
+| Configuration directory
+| `/etc/blecastd/`
+
+| Main configuration file
+| `/etc/blecastd/blecastd.toml`
+
+| Runtime directory
+| `/run/blecastd/`
+
+| Default dynamic data file
+| `/run/blecastd/dynamic_data.bin`
+
+| systemd-tmpfiles configuration
+| `/etc/tmpfiles.d/blecastd.conf`
+|===
+
+== Target Environment
+
+The initial implementation targets the following environment:
+
+* Debian-based Linux systems, including Debian, Raspberry Pi OS, and Ubuntu.
+* Python 3.11 or later.
+* BlueZ and Linux HCI Bluetooth devices.
+* Raw HCI socket access.
+* Initial implementation may run as `root` because HCI raw socket operations usually require elevated privileges.
+
+Python 3.11+ is preferred because TOML configuration can be parsed using the standard library module `tomllib`.
+
+== Important Design Notes
+
+=== bluetoothd Interaction
+
+`blecastd` directly controls the configured HCI device.
+
+It may conflict with `bluetoothd` or other applications that also try to control the same Bluetooth device.
+
+The installer must not automatically stop or disable `bluetooth.service`.
+Instead, the README should document that if advertising does not work or HCI commands are overwritten, the user may test with:
+
+## [source,bash]
+
+## sudo systemctl stop bluetooth
+
+or should use a dedicated USB Bluetooth dongle assigned only to `blecastd`.
+
+=== Company Identifier Notice
+
+The default custom Manufacturer Specific Data configuration uses:
+
+## [source,toml]
+
+## company_id = "0x1234"
+
+This is only a temporary identifier for closed laboratory experiments.
+
+For public products, externally distributed beacon specifications, or production deployment, users must use an official Bluetooth SIG Company Identifier.
+This requirement must be stated in the README and in comments inside the default TOML configuration file.
+
+Do not use Apple's `0x004C` Company Identifier for the custom Manufacturer Specific Data mode.
+`0x004C` is used only inside the iBeacon compatibility mode because iBeacon uses Apple's assigned identifier.
+
+== Terminology
+
+Use these terms consistently in documentation and code.
+Avoid using the word `payload` for the project-defined dynamic data unless referring generically to BLE or HCI protocol terminology.
+
+blecastd::
+The BLE advertising daemon implemented by this project.
+
+Advertising Data::
+The complete BLE Advertising Data byte sequence sent to the Bluetooth controller.
+It consists of one or more AD structures, such as Flags and Manufacturer Specific Data.
+
+Manufacturer Specific Data::
+A BLE Advertising Data type with AD Type `0xFF`.
+Its data begins with a 2-byte Bluetooth SIG Company Identifier, followed by manufacturer-defined bytes.
+
+Company Identifier::
+A 16-bit Bluetooth SIG-assigned identifier placed at the beginning of Manufacturer Specific Data.
+On air, it is encoded little-endian.
+
+user field::
+The project-defined byte sequence placed after the Company Identifier inside Manufacturer Specific Data.
+In custom manufacturer mode, the user field consists of the static header followed by dynamic data.
+
+static header::
+A fixed byte sequence prepended by `blecastd` at the beginning of the user field.
+It is configured by `static_header_hex` and `static_header_length`.
+The default is ASCII `BC`, encoded as `4243`.
+
+dynamic data::
+The variable byte sequence read by `blecastd` from the runtime dynamic data file.
+External writer processes update this file using atomic file replacement.
+
+update interval::
+The interval at which `blecastd` reads the dynamic data file and updates the BLE Advertising Data.
+
+advertising interval::
+The BLE controller-level interval at which advertising events are emitted.
+
+one-shot advertising window::
+A short advertising enable period triggered by `SIGUSR1` in signal mode.
+BLE does not guarantee exactly one physical advertising packet.
+
+== BLE Advertising Format
+
+=== AD Structure Basics
+
+BLE Advertising Data is a sequence of AD structures:
+
+## [source,text]
+
+## [Length][AD Type][AD Data]
+
+`Length` is the number of bytes following the Length byte itself.
+Therefore, `Length` includes `AD Type` and `AD Data`.
+
+Legacy BLE Advertising Data is limited to 31 bytes.
+
+=== Default Custom Manufacturer Format
+
+The default custom format uses:
+
+* Flags AD structure
+* Manufacturer Specific Data AD structure
+* Temporary Company Identifier `0x1234`
+* Static header `BC`
+* Dynamic data read from `/run/blecastd/dynamic_data.bin`
+
+The default byte layout is:
+
+## [source,text]
+
+Advertising Data, total <= 31 bytes
+
+AD0: Flags
+02 01 06
+
+AD1: Manufacturer Specific Data
+[Length] FF [Company ID little-endian] [user field]
+
+user field:
+[static header] [dynamic data]
+------------------------------
+
+With default values:
+
+## [source,text]
+
+02 01 06
+19 FF 34 12 42 43 [22 bytes dynamic data]
+-----------------------------------------
+
+Breakdown:
+
+## [source,text]
+
+02 01 06
+Flags AD structure
+Length = 2
+Type   = 0x01
+Value  = 0x06
+
+19 FF
+Manufacturer Specific Data AD structure
+Length = 0x19 = 25 bytes after Length
+Type   = 0xFF
+
+34 12
+Company Identifier = 0x1234, little-endian
+
+42 43
+static header = ASCII "BC"
+
+[22 bytes]
+dynamic data
+------------
+
+The default user field length is:
+
+## [source,text]
+
+## static header length + dynamic data length = 2 + 22 = 24 bytes
+
+When Flags are included, the custom Manufacturer Specific Data user field should not exceed 24 bytes in the legacy 31-byte Advertising Data limit.
+
+Validation rule:
+
+## [source,text]
+
+## static_header_length + dynamic_data.length <= 24
+
+=== iBeacon Compatibility Format
+
+iBeacon support is secondary and intended for compatibility checks with existing scanners and smartphone applications.
+It is not the default sensor data transport format.
+
+The iBeacon Advertising Data format is:
+
+## [source,text]
+
+02 01 06
+1A FF 4C 00 02 15 [UUID 16B] [Major 2B] [Minor 2B] [TxPower 1B]
+---------------------------------------------------------------
+
+Where:
+
+* Company Identifier is Apple's `0x004C`, encoded as `4C 00`.
+* UUID is 16 bytes.
+* Major and Minor are encoded big-endian.
+* TxPower is a signed 8-bit integer.
+
+Initial iBeacon mode should use only static values from configuration.
+It should not read the dynamic data file.
+
+== Configuration File
+
+The main configuration file is:
+
+## [source,text]
+
+## /etc/blecastd/blecastd.toml
+
+The installer must not overwrite an existing configuration file.
+If the file already exists, the installer should leave it unchanged and install a sample file such as:
+
+## [source,text]
+
+## /etc/blecastd/blecastd.toml.example
+
+=== Default TOML Configuration
+
+The default configuration file must be fully populated with recommended values and English comments explaining each item.
+
+## [source,toml]
+
+# /etc/blecastd/blecastd.toml
+
+#
+
+# Default configuration for blecastd.
+
+# This file is written in TOML format.
+
+[bluetooth]
+
+# Bluetooth HCI device name used for advertising.
+
+# Examples: "hci0", "hci1"
+
+device = "hci0"
+
+[service]
+
+# Main update interval in milliseconds.
+
+# The daemon reads the dynamic data file at this interval and updates
+
+# the BLE Advertising Data.
+
+update_interval_ms = 2000
+
+# BLE controller-level advertising interval in milliseconds.
+
+# This controls how frequently the Bluetooth controller emits advertising events.
+
+advertising_interval_ms = 100
+
+# Operation mode.
+
+# "periodic" : update and advertise continuously
+
+# "signal"   : advertise only when SIGUSR1 is received
+
+# "both"     : periodic advertising plus SIGUSR1-triggered immediate update
+
+trigger_mode = "periodic"
+
+# Duration of the advertising window for one-shot signal-triggered mode.
+
+# Note: BLE cannot guarantee exactly one physical packet. This opens a short
+
+# advertising window, during which multiple advertising events may be emitted.
+
+oneshot_duration_ms = 300
+
+[beacon]
+
+# Beacon format.
+
+# "custom_manufacturer" is intended for sensor data transport.
+
+# "ibeacon" is intended mainly for compatibility checks with existing scanners.
+
+format = "custom_manufacturer"
+
+[custom_manufacturer]
+
+# Temporary Company Identifier used for closed laboratory experiments.
+
+# For public products or externally distributed beacon specifications,
+
+# use an official Bluetooth SIG Company Identifier.
+
+company_id = "0x1234"
+
+[user_field]
+
+# Fixed byte sequence prepended by blecastd at the beginning of the user field.
+
+# Bytes are written in on-air order. This is not interpreted as an integer.
+
+# 4243 = ASCII "BC"
+
+static_header_hex = "4243"
+
+# Length of the static header in bytes.
+
+static_header_length = 2
+
+[dynamic_data]
+
+# Runtime binary file written by external writer processes.
+
+# This file contains only the variable dynamic data part of the user field.
+
+# The static header is added by blecastd.
+
+file = "/run/blecastd/dynamic_data.bin"
+
+# Number of dynamic data bytes read from the file.
+
+# In the default custom manufacturer format:
+
+# 24 bytes total user field
+
+# 2 bytes static header "BC"
+
+# 22 bytes dynamic data
+
+length = 22
+
+# Byte used to initialize a missing dynamic data file and to pad short reads.
+
+# This must represent exactly one byte.
+
+# Recommended notation is two hex digits without a 0x prefix.
+
+# Examples: "00", "ff"
+
+# If this item is omitted, blecastd treats it as "00".
+
+fill_byte_hex = "00"
+
+# File mode used when creating the dynamic data file.
+
+mode = "0664"
+
+# File owner and group used when creating the dynamic data file.
+
+owner = "root"
+group = "blecast"
+
+# Recommended write method for external writer processes.
+
+# Writers should write to a temporary file in the same directory and then
+
+# atomically replace this file using rename(2), mv, or os.replace().
+
+write_method = "atomic_replace"
+
+[ibeacon]
+
+# Static iBeacon UUID used when beacon.format = "ibeacon".
+
+uuid = "12345678-1234-1234-1234-1234567890ab"
+
+# Static iBeacon major/minor values.
+
+major = 1
+minor = 1
+
+# Calibrated RSSI at 1 m, in dBm.
+
+## tx_power = -59
+
+=== Configuration Validation
+
+The daemon must validate configuration at startup and after `SIGHUP` reload.
+
+The following conditions are fatal errors:
+
+* Configuration file cannot be read.
+* TOML parsing fails.
+* `bluetooth.device` is not in `hciN` form.
+* The configured HCI device does not exist or cannot be opened.
+* `beacon.format` is unknown.
+* `service.trigger_mode` is unknown.
+* `custom_manufacturer.company_id` is outside `0x0000` to `0xffff`.
+* `user_field.static_header_hex` is invalid hex.
+* `user_field.static_header_length` does not match the decoded byte length of `static_header_hex`.
+* `dynamic_data.fill_byte_hex` is invalid or does not decode to exactly one byte.
+* `user_field.static_header_length + dynamic_data.length > 24` in custom manufacturer mode.
+* Numeric intervals are zero or negative.
+
+The following conditions should produce warnings but not necessarily stop the daemon:
+
+* Dynamic data file does not exist and is created.
+* Dynamic data file is shorter than `dynamic_data.length`; short reads are padded in memory.
+* Dynamic data file is longer than `dynamic_data.length`; reads are truncated in memory.
+* The default temporary Company Identifier `0x1234` is used.
+
+=== Hex String Rules
+
+For `static_header_hex`:
+
+* Interpret as on-air byte order.
+* Do not interpret as an integer.
+* Must contain an even number of hex digits.
+* Spaces are not required. Initial implementation may reject spaces.
+
+For `fill_byte_hex`:
+
+* The recommended notation is two hex digits, such as `"00"` or `"ff"`.
+* The parser should also accept `"0x00"` and `"0xff"`.
+* If omitted, default to `"00"`.
+* After normalization, it must decode to exactly one byte.
+
+== Runtime Directory and File Synchronization
+
+=== Runtime Directory
+
+The default runtime directory is:
+
+## [source,text]
+
+## /run/blecastd
+
+This directory is managed by `systemd-tmpfiles`.
+
+The installer should create:
+
+## [source,text]
+
+## /etc/tmpfiles.d/blecastd.conf
+
+with the following content:
+
+## [source,text]
+
+## d /run/blecastd 2775 root blecast -
+
+Meaning:
+
+[cols="1,2",options="header"]
+|===
+| Field | Meaning
+
+| `d`
+| Create a directory
+
+| `/run/blecastd`
+| Runtime directory path
+
+| `2775`
+| Directory mode with setgid, group-writable
+
+| `root`
+| Owner
+
+| `blecast`
+| Group
+
+| `-`
+| No age-based cleanup rule
+|===
+
+The installer should run:
+
+## [source,bash]
+
+## systemd-tmpfiles --create /etc/tmpfiles.d/blecastd.conf
+
+=== Dynamic Data File Creation
+
+At startup, after reading configuration, `blecastd` should ensure that the configured dynamic data file exists.
+
+If it does not exist, create it with:
+
+* length: `dynamic_data.length` bytes
+* content: repeated `dynamic_data.fill_byte_hex` byte
+* owner: `dynamic_data.owner`
+* group: `dynamic_data.group`
+* mode: `dynamic_data.mode`
+
+If the file exists, `blecastd` should not rewrite it at startup unless required for permissions in a future version.
+
+=== Atomic Replacement Model
+
+The default synchronization model is atomic file replacement.
+
+External writer processes must not update the dynamic data file by partially overwriting it in place.
+Instead, they should:
+
+. Create a temporary file in the same directory as the configured dynamic data file.
+. Write the complete dynamic data bytes to the temporary file.
+. Set appropriate mode if needed.
+. Replace the target file using `rename(2)`, shell `mv`, or Python `os.replace()`.
+
+Because the temporary file is in the same directory and filesystem, the replacement is atomic.
+`blecastd` observes either the previous complete dynamic data file or the new complete dynamic data file, not a partially written file.
+
+`blecastd` should open, read, and close the dynamic data file on each update cycle.
+It should not keep the file descriptor open forever.
+
+== Signal Handling
+
+The daemon must support the following signals:
+
+SIGUSR1::
+Immediate send trigger.
+Behavior depends on `service.trigger_mode`.
+
+SIGHUP::
+Reload configuration.
+The daemon should validate the new configuration before applying it.
+If validation fails, it should keep the previous valid configuration and log an error.
+
+SIGTERM / SIGINT::
+Stop advertising, close the HCI socket, and exit cleanly.
+
+== Operation Modes
+
+=== periodic
+
+In `periodic` mode:
+
+* Advertising is enabled while the daemon is running.
+* Every `update_interval_ms`, `blecastd` reads the dynamic data file.
+* It builds new Advertising Data.
+* It sends HCI `LE Set Advertising Data`.
+
+=== signal
+
+In `signal` mode:
+
+* Advertising is normally disabled.
+* When `SIGUSR1` is received:
+  ** read dynamic data immediately
+  ** build Advertising Data
+  ** enable advertising
+  ** wait `oneshot_duration_ms`
+  ** disable advertising again
+
+This mode does not guarantee exactly one physical BLE packet.
+It opens a short advertising window.
+
+=== both
+
+In `both` mode:
+
+* Periodic advertising remains active.
+* On `SIGUSR1`, the daemon immediately reads dynamic data and updates Advertising Data.
+* Advertising remains enabled.
+
+== HCI Implementation Requirements
+
+Initial implementation should use raw HCI commands.
+
+Required HCI operations:
+
+* Open raw HCI socket for the configured device.
+* Bring up the device if needed.
+* Set LE Advertising Parameters.
+* Set LE Advertising Data.
+* Enable or disable LE Advertising.
+
+Use the configured `advertising_interval_ms` to set the BLE controller advertising interval.
+BLE advertising interval units are 0.625 ms.
+
+For compatibility, default advertising type should be connectable undirected advertising, `ADV_IND`.
+This is based on testing where minimal non-connectable advertising without Flags may not be visible through some receiver stacks.
+
+Initial implementation may fix advertising type to `ADV_IND` and include Flags `02 01 06`.
+Advertising type may become configurable in a future version.
+
+== Repository Layout
+
+Recommended repository layout:
+
+## [source,text]
+
+blecastd/
+README.adoc
+SPEC.adoc
+install.sh
+uninstall.sh
+etc/
+blecastd.toml
+blecastd.service
+tmpfiles.d/
+blecastd.conf
+src/
+blecastd/
+**init**.py
+main.py
+config.py
+hci.py
+beacon.py
+dynamic_data.py
+signals.py
+logging_util.py
+examples/
+writers/
+bash_dynamic_data_writer.sh
+python_dynamic_data_writer.py
+scanners/
+linux_hci_scan.py
+bleak_scan_custom.py
+--------------------
+
+== Python Module Responsibilities
+
+config.py::
+Read TOML configuration, merge defaults, validate values, and expose a typed configuration object.
+
+hci.py::
+HCI raw socket handling and low-level LE advertising commands.
+
+beacon.py::
+Build Advertising Data for `custom_manufacturer` and `ibeacon` modes.
+
+dynamic_data.py::
+Create, read, pad, and truncate the dynamic data file.
+
+signals.py::
+Handle `SIGUSR1`, `SIGHUP`, `SIGTERM`, and `SIGINT`.
+
+main.py::
+Daemon entry point, control loop, service mode handling, and top-level error handling.
+
+logging_util.py::
+Logging setup. Initial implementation should log to stdout/stderr for journald.
+
+== Naming Rules
+
+Use these names consistently in code:
+
+## [source,python]
+
+company_id
+static_header
+static_header_hex
+static_header_length
+user_field
+dynamic_data
+dynamic_data_file
+dynamic_data_length
+fill_byte
+fill_byte_hex
+advertising_data
+update_interval_ms
+advertising_interval_ms
+oneshot_duration_ms
+trigger_mode
+------------
+
+Avoid using `payload` for the project-defined dynamic data.
+
+Acceptable uses of `payload` are limited to generic protocol descriptions, for example HCI command payloads, if unavoidable.
+
+== Installation Behavior
+
+`install.sh` must be run as root.
+
+The installer should:
+
+. Create system group `blecast` if it does not exist.
+. Install source files under `/opt/blecastd/`.
+. Install `/etc/blecastd/blecastd.toml` if it does not already exist.
+. If config already exists, do not overwrite it; install sample as `blecastd.toml.example`.
+. Install `/etc/systemd/system/blecastd.service`.
+. Install `/etc/tmpfiles.d/blecastd.conf`.
+. Run `systemd-tmpfiles --create /etc/tmpfiles.d/blecastd.conf`.
+. Run `systemctl daemon-reload`.
+. Enable and start `blecastd.service`.
+
+The installer must not stop or disable `bluetooth.service` automatically.
+
+== systemd Service
+
+A recommended initial service file:
+
+## [source,ini]
+
+[Unit]
+Description=blecastd BLE Advertising Beacon Daemon
+After=network.target bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /opt/blecastd/src/blecastd/main.py --config /etc/blecastd/blecastd.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+--------------------------
+
+Future versions may reduce privileges using Linux capabilities.
+Initial implementation may run as root for simplicity.
+
+== Uninstall Behavior
+
+`uninstall.sh` should be conservative.
+
+It should:
+
+* stop and disable `blecastd.service`
+* remove `/etc/systemd/system/blecastd.service`
+* remove `/etc/tmpfiles.d/blecastd.conf`
+* remove `/opt/blecastd/`
+* run `systemctl daemon-reload`
+
+It should not remove `/etc/blecastd/` by default.
+It should not remove the `blecast` group by default.
+
+== Example Bash Dynamic Data Writer
+
+The repository should include a simple Bash writer demonstrating atomic replacement.
+
+Bash variables cannot safely hold arbitrary NUL bytes, so the example should build data as a hex string and convert it to binary using `xxd -r -p`.
+
+## [source,bash]
+
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET="/run/blecastd/dynamic_data.bin"
+DYNAMIC_DATA_LEN=22
+INTERVAL_SEC=2
+
+write_dynamic_data_atomic_from_hex() {
+local hex="$1"
+local dir
+local tmp
+
+```
+dir="$(dirname "$TARGET")"
+tmp="$(mktemp "${dir}/.dynamic_data.tmp.XXXXXX")"
+
+# Convert hex string to binary.
+printf '%s' "$hex" | xxd -r -p > "$tmp"
+
+# Pad or truncate to the configured length.
+truncate -s "$DYNAMIC_DATA_LEN" "$tmp"
+
+# Keep the file writable by the blecast group after replacement.
+chmod 0664 "$tmp"
+
+# Atomic replacement because tmp is in the same directory as TARGET.
+mv -f "$tmp" "$TARGET"
+```
+
+}
+
+collect_dynamic_data_hex() {
+# Example layout:
+#   uint32 timestamp, big-endian
+#   int16  temperature_x100, big-endian
+#   uint8  status
+#
+# Replace this part with actual sensor readout.
+
+```
+local timestamp
+local temp_x100
+local status
+
+timestamp="$(date +%s)"
+temp_x100=2345
+status=0
+
+printf '%08x%04x%02x' \
+    "$timestamp" \
+    "$temp_x100" \
+    "$status"
+```
+
+}
+
+main() {
+while true; do
+hex="$(collect_dynamic_data_hex)"
+write_dynamic_data_atomic_from_hex "$hex"
+sleep "$INTERVAL_SEC"
+done
+}
+
+## main "$@"
+
+== Example Python Dynamic Data Writer
+
+The repository should include a Python example showing clearer binary encoding.
+
+## [source,python]
+
+#!/usr/bin/env python3
+
+import argparse
+import os
+import struct
+import time
+from pathlib import Path
+
+DEFAULT_DYNAMIC_DATA_PATH = "/run/blecastd/dynamic_data.bin"
+DEFAULT_INTERVAL_SEC = 2.0
+DEFAULT_DYNAMIC_DATA_LEN = 22
+
+def collect_sensor_values() -> dict:
+"""
+Collect sensor values.
+
+```
+Replace this function with actual sensor readout code.
+"""
+return {
+    "timestamp": int(time.time()),
+    "temperature_c": 23.45,
+    "status": 0,
+}
+```
+
+def encode_dynamic_data(values: dict, length: int) -> bytes:
+"""
+Encode sensor values into the blecastd dynamic data field.
+
+```
+Example layout:
+  uint32 timestamp, big-endian
+  int16  temperature_c * 100, big-endian
+  uint8  status
+  remaining bytes reserved/padded with 0x00
+"""
+timestamp = int(values["timestamp"]) & 0xFFFFFFFF
+temp_x100 = int(round(values["temperature_c"] * 100))
+status = int(values["status"]) & 0xFF
+
+data = struct.pack(">IhB", timestamp, temp_x100, status)
+
+if len(data) > length:
+    return data[:length]
+
+return data.ljust(length, b"\x00")
+```
+
+def write_dynamic_data_atomic(path: Path, data: bytes, mode: int = 0o664) -> None:
+"""
+Atomically replace the dynamic data file.
+
+```
+The temporary file must be created in the same directory as the target.
+"""
+path.parent.mkdir(parents=True, exist_ok=True)
+
+tmp_path = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+
+with open(tmp_path, "wb") as f:
+    f.write(data)
+    f.flush()
+    os.fsync(f.fileno())
+
+os.chmod(tmp_path, mode)
+os.replace(tmp_path, path)
+```
+
+def run(interval_sec: float, path: Path, length: int) -> None:
+next_time = time.monotonic()
+
+```
+while True:
+    values = collect_sensor_values()
+    dynamic_data = encode_dynamic_data(values, length)
+    write_dynamic_data_atomic(path, dynamic_data)
+
+    print(
+        f"[INFO] updated {path} len={len(dynamic_data)} "
+        f"timestamp={values['timestamp']}",
+        flush=True,
+    )
+
+    next_time += interval_sec
+    sleep_time = next_time - time.monotonic()
+
+    if sleep_time > 0:
+        time.sleep(sleep_time)
+    else:
+        next_time = time.monotonic()
+```
+
+def parse_args():
+parser = argparse.ArgumentParser()
+parser.add_argument("--path", default=DEFAULT_DYNAMIC_DATA_PATH)
+parser.add_argument("--interval-sec", type=float, default=DEFAULT_INTERVAL_SEC)
+parser.add_argument("--length", type=int, default=DEFAULT_DYNAMIC_DATA_LEN)
+return parser.parse_args()
+
+def main() -> None:
+args = parse_args()
+
+```
+if args.interval_sec <= 0:
+    raise ValueError("--interval-sec must be positive")
+
+if args.length <= 0:
+    raise ValueError("--length must be positive")
+
+run(
+    interval_sec=args.interval_sec,
+    path=Path(args.path),
+    length=args.length,
+)
+```
+
+if **name** == "**main**":
+main()
+------
+
+== Logging and Debugging
+
+Initial implementation should log to stdout/stderr.
+When run under systemd, logs can be checked with:
+
+## [source,bash]
+
+## journalctl -u blecastd -f
+
+Useful debug commands:
+
+## [source,bash]
+
+hciconfig
+hciconfig hci0
+sudo btmon
+systemctl status blecastd
+journalctl -u blecastd -n 100
+-----------------------------
+
+Expected `btmon` output for custom manufacturer mode should show:
+
+* Flags `0x06`
+* Manufacturer Specific Data
+* Company Identifier such as `0x1234`
+* user field beginning with static header `42 43`
+
+== Testing Plan
+
+=== Unit Tests
+
+Implement unit tests for:
+
+* TOML parsing and default filling.
+* Hex parsing for Company Identifier, static header, and fill byte.
+* Validation failures.
+* Custom manufacturer Advertising Data construction.
+* iBeacon Advertising Data construction.
+* Dynamic data short-read padding.
+* Dynamic data truncation.
+
+=== Integration Tests on Linux
+
+Manual integration steps:
+
+. Install the repository using `sudo ./install.sh`.
+. Check service status.
+. Confirm runtime directory exists:
++
+[source,bash]
+-------------
+
+## ls -ld /run/blecastd
+
+. Confirm dynamic data file exists:
++
+[source,bash]
+-------------
+
+## xxd /run/blecastd/dynamic_data.bin
+
+. Run `sudo btmon` and restart service.
+. Confirm `LE Set Advertising Data` appears.
+. Use another Linux Bluetooth receiver to scan advertising data.
+
+== Receiver Tools
+
+Receiver tools are examples only.
+They are not the main product of this repository.
+
+Place them under:
+
+## [source,text]
+
+## examples/scanners/
+
+Linux HCI scanner should be treated as the reference scanner for raw address and raw Advertising Data inspection.
+
+MacOS + Bleak scanners may be included only as convenience examples.
+MacOS CoreBluetooth may hide or transform BLE addresses and may not expose all raw advertising details.
+
+== Future Work
+
+Possible future extensions:
+
+* Configurable advertising type, such as non-connectable advertising.
+* BD Address based HCI device selection.
+* Privilege reduction using Linux capabilities.
+* Unix domain socket input mode.
+* Multiple dynamic data files or multiple beacon instances.
+* Extended Advertising support for larger data fields.
+* Optional checksum or sequence counter in dynamic data.
+* Optional lock-based writer mode for multi-writer deployments.
+
+== Initial Codex Implementation Goal
+
+The first Codex implementation should produce a working repository that can:
+
+. Install `blecastd` with `sudo ./install.sh`.
+. Create the `blecast` group.
+. Install default configuration without overwriting existing config.
+. Create `/run/blecastd` via `systemd-tmpfiles`.
+. Start `blecastd.service`.
+. Read `/run/blecastd/dynamic_data.bin` periodically.
+. Build BLE Advertising Data in custom Manufacturer Specific Data format.
+. Broadcast through the configured HCI device.
+. Support `SIGUSR1`, `SIGHUP`, and clean shutdown.
+. Include Bash and Python dynamic data writer examples.
+. Include at least one Linux scanner example for validation.
+
+The implementation should prioritize clarity, explicit validation, and simple operation over excessive abstraction.
