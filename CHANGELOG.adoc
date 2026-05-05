@@ -2,7 +2,7 @@
 
 = Changelog
 
-== Unreleased
+== v0.1.1 - 2026-05-05
 
 * Added configurable Bluetooth advertising type with non-connectable beacon mode.
 * Documented troubleshooting for active service with invisible beacon after client connection.
