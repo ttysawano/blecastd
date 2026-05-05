@@ -305,6 +305,14 @@ The default configuration file must be fully populated with recommended values a
 
 device = "hci0"
 
+# Bluetooth legacy advertising type.
+
+# "connectable" uses ADV_IND and allows scanner/client connection attempts.
+
+# "non_connectable" uses ADV_NONCONN_IND and is recommended for beacon operation.
+
+advertising_type = "non_connectable"
+
 [service]
 
 # Main update interval in milliseconds.
@@ -448,6 +456,7 @@ The following conditions are fatal errors:
 * Configuration file cannot be read.
 * TOML parsing fails.
 * `bluetooth.device` is not in `hciN` form.
+* `bluetooth.advertising_type` is not `connectable` or `non_connectable`.
 * The configured HCI device does not exist or cannot be opened.
 * `beacon.format` is unknown.
 * `service.trigger_mode` is unknown.
@@ -633,11 +642,15 @@ Required HCI operations:
 Use the configured `advertising_interval_ms` to set the BLE controller advertising interval.
 BLE advertising interval units are 0.625 ms.
 
-For compatibility, default advertising type should be connectable undirected advertising, `ADV_IND`.
-This is based on testing where minimal non-connectable advertising without Flags may not be visible through some receiver stacks.
+Use the configured `bluetooth.advertising_type` to set the Bluetooth legacy advertising type:
 
-Initial implementation may fix advertising type to `ADV_IND` and include Flags `02 01 06`.
-Advertising type may become configurable in a future version.
+* `connectable`: connectable undirected advertising, `ADV_IND` (`0x00`), allowing scanner/client connection attempts.
+* `non_connectable`: non-connectable undirected advertising, `ADV_NONCONN_IND` (`0x03`), recommended for beacon operation.
+
+The default configuration should use `non_connectable` because `blecastd` is primarily a beacon broadcaster.
+If a receiver stack does not show non-connectable advertisements, users may try `connectable`.
+
+Both advertising types should include Flags `02 01 06` for the default custom manufacturer format.
 
 == Repository Layout
 
@@ -1069,7 +1082,7 @@ MacOS CoreBluetooth may hide or transform BLE addresses and may not expose all r
 
 Possible future extensions:
 
-* Configurable advertising type, such as non-connectable advertising.
+* Periodic re-enable behavior to recover if a controller stops advertising.
 * BD Address based HCI device selection.
 * Privilege reduction using Linux capabilities.
 * Unix domain socket input mode.

@@ -40,6 +40,11 @@ HCI_CHANNEL_RAW = 0
 SOL_HCI = 0
 HCI_FILTER = 2
 ADV_IND = 0x00
+ADV_NONCONN_IND = 0x03
+ADVERTISING_TYPE_VALUES = {
+    "connectable": ADV_IND,
+    "non_connectable": ADV_NONCONN_IND,
+}
 OWN_ADDRESS_PUBLIC = 0x00
 ALL_ADVERTISING_CHANNELS = 0x07
 ALLOW_SCAN_AND_CONNECT_ANY = 0x00
@@ -86,13 +91,24 @@ def build_hci_command_packet(opcode: int, command_parameters: bytes) -> bytes:
     return bytes([HCI_COMMAND_PKT]) + struct.pack("<HB", opcode, len(command_parameters)) + command_parameters
 
 
-def build_le_set_advertising_parameters(advertising_interval_ms: int) -> bytes:
+def advertising_type_to_hci_value(advertising_type: str) -> int:
+    try:
+        return ADVERTISING_TYPE_VALUES[advertising_type]
+    except KeyError as exc:
+        raise HCIError(f"unknown advertising_type: {advertising_type}") from exc
+
+
+def build_le_set_advertising_parameters(
+    advertising_interval_ms: int,
+    advertising_type: str = "non_connectable",
+) -> bytes:
     interval_units = advertising_interval_ms_to_units(advertising_interval_ms)
+    advertising_type_value = advertising_type_to_hci_value(advertising_type)
     command_parameters = struct.pack(
         "<HHBBB6sBB",
         interval_units,
         interval_units,
-        ADV_IND,
+        advertising_type_value,
         OWN_ADDRESS_PUBLIC,
         OWN_ADDRESS_PUBLIC,
         b"\x00" * 6,
@@ -192,10 +208,14 @@ class HCIController:
         except OSError as exc:
             LOG.warning("failed to run hciconfig for %s: %s", self.device, exc)
 
-    def set_advertising_parameters(self, advertising_interval_ms: int) -> None:
+    def set_advertising_parameters(
+        self,
+        advertising_interval_ms: int,
+        advertising_type: str = "non_connectable",
+    ) -> None:
         self._send_command_and_check(
             OPCODE_LE_SET_ADVERTISING_PARAMETERS,
-            build_le_set_advertising_parameters(advertising_interval_ms),
+            build_le_set_advertising_parameters(advertising_interval_ms, advertising_type),
         )
 
     def set_advertising_data(self, advertising_data: bytes) -> None:

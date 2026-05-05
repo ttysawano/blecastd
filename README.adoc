@@ -129,6 +129,7 @@ An updated sample is installed as:
 Important fields:
 
 * `bluetooth.device`: HCI device such as `hci0` or `hci1`
+* `bluetooth.advertising_type`: `non_connectable` for beacon operation, or `connectable` for compatibility with scanner stacks that expect connectable advertisements
 * `service.update_interval_ms`: how often the daemon reads dynamic data and updates Advertising Data
 * `service.advertising_interval_ms`: BLE controller advertising interval
 * `custom_manufacturer.company_id`: Manufacturer Specific Data Company Identifier
@@ -278,6 +279,33 @@ Bleak may hide or transform low-level advertising details on some platforms.
 
 `hci0` versus `hci1`::
 Check available devices with `hciconfig` and update `bluetooth.device` in `/etc/blecastd/blecastd.toml`.
+
+Service active but beacon no longer visible::
+Symptom: `blecastd.service` is active and logs `updated Advertising Data`, and `btmon` shows `LE Set Advertising Data` success, but scanners no longer show the beacon.
++
+If `bluetooth.advertising_type` is `connectable`, a scanner/client may attempt to connect. Some controllers may stop advertising after a connection attempt, while `blecastd` continues updating Advertising Data.
++
+Immediate recovery:
++
+[source,bash]
+----
+sudo systemctl restart blecastd
+----
++
+Recommended beacon configuration:
++
+[source,toml]
+----
+[bluetooth]
+advertising_type = "non_connectable"
+----
++
+If some receiver stacks fail to show non-connectable advertisements, try:
++
+[source,toml]
+----
+advertising_type = "connectable"
+----
 
 rfkill::
 If the controller is blocked, unblock it before starting the service:

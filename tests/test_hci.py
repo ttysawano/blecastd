@@ -7,6 +7,8 @@ import unittest
 from unittest.mock import patch
 
 from blecastd.hci import (
+    ADV_IND,
+    ADV_NONCONN_IND,
     EVT_CMD_COMPLETE,
     EVT_CMD_STATUS,
     HCI_COMMAND_PKT,
@@ -17,6 +19,7 @@ from blecastd.hci import (
     OPCODE_LE_SET_ADVERTISE_ENABLE,
     OPCODE_LE_SET_ADVERTISING_DATA,
     OPCODE_LE_SET_ADVERTISING_PARAMETERS,
+    advertising_type_to_hci_value,
     advertising_interval_ms_to_units,
     build_command_response_filter,
     build_le_set_advertise_enable,
@@ -169,14 +172,25 @@ class HCITests(unittest.TestCase):
         self.assertEqual(advertising_interval_ms_to_units(100), 160)
 
     def test_set_advertising_parameters_command(self):
-        packet = build_le_set_advertising_parameters(100)
+        packet = build_le_set_advertising_parameters(100, "connectable")
 
         self.assertEqual(packet[0], HCI_COMMAND_PKT)
         self.assertEqual(int.from_bytes(packet[1:3], "little"), OPCODE_LE_SET_ADVERTISING_PARAMETERS)
         self.assertEqual(packet[3], 15)
         self.assertEqual(packet[4:8], bytes.fromhex("a000a000"))
-        self.assertEqual(packet[8], 0x00)
+        self.assertEqual(packet[8], ADV_IND)
         self.assertEqual(packet[-2:], bytes([0x07, 0x00]))
+
+    def test_set_advertising_parameters_non_connectable_type(self):
+        packet = build_le_set_advertising_parameters(100, "non_connectable")
+
+        self.assertEqual(packet[8], ADV_NONCONN_IND)
+
+    def test_advertising_type_to_hci_value(self):
+        self.assertEqual(advertising_type_to_hci_value("connectable"), ADV_IND)
+        self.assertEqual(advertising_type_to_hci_value("non_connectable"), ADV_NONCONN_IND)
+        with self.assertRaises(HCIError):
+            advertising_type_to_hci_value("scannable")
 
     def test_set_advertising_data_command_pads_to_31_bytes(self):
         packet = build_le_set_advertising_data(bytes.fromhex("020106"))

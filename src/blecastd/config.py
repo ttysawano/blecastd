@@ -18,6 +18,7 @@ class ConfigError(ValueError):
 @dataclass(frozen=True)
 class BluetoothConfig:
     device: str
+    advertising_type: str
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,7 @@ class BlecastdConfig:
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "bluetooth": {"device": "hci0"},
+    "bluetooth": {"device": "hci0", "advertising_type": "non_connectable"},
     "service": {
         "update_interval_ms": 2000,
         "advertising_interval_ms": 100,
@@ -106,6 +107,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 VALID_BEACON_FORMATS = {"custom_manufacturer", "ibeacon"}
+VALID_ADVERTISING_TYPES = {"connectable", "non_connectable"}
 VALID_TRIGGER_MODES = {"periodic", "signal", "both"}
 HCI_DEVICE_RE = re.compile(r"^hci[0-9]+$")
 
@@ -135,6 +137,9 @@ def build_config(raw: dict[str, Any], *, require_hci_device: bool = False) -> Bl
         raise ConfigError("bluetooth.device must be in hciN form")
     if require_hci_device and not Path("/sys/class/bluetooth", bluetooth_device).exists():
         raise ConfigError(f"configured HCI device does not exist: {bluetooth_device}")
+    advertising_type = _require_str(raw, "bluetooth", "advertising_type")
+    if advertising_type not in VALID_ADVERTISING_TYPES:
+        raise ConfigError(f"bluetooth.advertising_type is unknown: {advertising_type}")
 
     service = raw["service"]
     update_interval_ms = _positive_int(service["update_interval_ms"], "service.update_interval_ms")
@@ -179,7 +184,7 @@ def build_config(raw: dict[str, Any], *, require_hci_device: bool = False) -> Bl
     tx_power = _range_int(ibeacon["tx_power"], "ibeacon.tx_power", -128, 127)
 
     return BlecastdConfig(
-        bluetooth=BluetoothConfig(device=bluetooth_device),
+        bluetooth=BluetoothConfig(device=bluetooth_device, advertising_type=advertising_type),
         service=ServiceConfig(
             update_interval_ms=update_interval_ms,
             advertising_interval_ms=advertising_interval_ms,

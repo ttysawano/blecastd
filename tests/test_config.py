@@ -24,9 +24,29 @@ class ConfigTests(unittest.TestCase):
             config = load_config(config_path)
 
         self.assertEqual(config.bluetooth.device, "hci1")
+        self.assertEqual(config.bluetooth.advertising_type, "non_connectable")
         self.assertEqual(config.dynamic_data.length, 22)
         self.assertEqual(config.user_field.static_header, b"BC")
         self.assertEqual(config.dynamic_data.fill_byte, b"\x00")
+
+    def test_advertising_type_accepts_valid_values(self):
+        for advertising_type in ("connectable", "non_connectable"):
+            with self.subTest(advertising_type=advertising_type):
+                raw = dict(DEFAULT_CONFIG)
+                raw["bluetooth"] = {
+                    **DEFAULT_CONFIG["bluetooth"],
+                    "advertising_type": advertising_type,
+                }
+
+                config = build_config(raw)
+
+                self.assertEqual(config.bluetooth.advertising_type, advertising_type)
+
+    def test_validation_rejects_unknown_advertising_type(self):
+        raw = dict(DEFAULT_CONFIG)
+        raw["bluetooth"] = {**DEFAULT_CONFIG["bluetooth"], "advertising_type": "scannable"}
+        with self.assertRaises(ConfigError):
+            build_config(raw)
 
     def test_company_id_hex_and_range(self):
         self.assertEqual(parse_company_id("0x1234"), 0x1234)

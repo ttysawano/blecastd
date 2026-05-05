@@ -4,6 +4,9 @@
 
 == Unreleased
 
+* Added configurable Bluetooth advertising type with non-connectable beacon mode.
+* Documented troubleshooting for active service with invisible beacon after client connection.
+
 == v0.1.0 - 2026-05-03
 
 * Added custom Manufacturer Specific Data BLE advertising daemon.

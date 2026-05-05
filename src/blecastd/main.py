@@ -15,7 +15,7 @@ from .beacon import (
 )
 from .config import BlecastdConfig, ConfigError, load_config
 from .dynamic_data import ensure_dynamic_data_file, normalize_dynamic_data, read_dynamic_data_file
-from .hci import HCIController, HCIError
+from .hci import HCIController, HCIError, advertising_type_to_hci_value
 from .logging_util import configure_logging
 from .signals import SignalState, install_signal_handlers
 
@@ -160,11 +160,17 @@ class BlecastdDaemon:
         if self.controller is None:
             raise HCIError("HCI controller is not open")
         self._set_advertising_enabled(False, allow_command_disallowed=True)
-        self.controller.set_advertising_parameters(config.service.advertising_interval_ms)
+        advertising_type_value = advertising_type_to_hci_value(config.bluetooth.advertising_type)
+        self.controller.set_advertising_parameters(
+            config.service.advertising_interval_ms,
+            config.bluetooth.advertising_type,
+        )
         LOG.info(
-            "configured advertising interval %d ms on %s",
+            "configured advertising interval %d ms on %s; advertising_type=%s hci_value=0x%02x",
             config.service.advertising_interval_ms,
             config.bluetooth.device,
+            config.bluetooth.advertising_type,
+            advertising_type_value,
         )
 
     def _update_advertising_data(self, config: BlecastdConfig) -> bytes:

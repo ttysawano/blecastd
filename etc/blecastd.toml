@@ -10,6 +10,11 @@
 # Examples: "hci0", "hci1"
 device = "hci0"
 
+# Bluetooth legacy advertising type.
+# "connectable" uses ADV_IND and allows scanner/client connection attempts.
+# "non_connectable" uses ADV_NONCONN_IND and is recommended for beacon operation.
+advertising_type = "non_connectable"
+
 [service]
 # Main update interval in milliseconds.
 # The daemon reads the dynamic data file at this interval and updates
